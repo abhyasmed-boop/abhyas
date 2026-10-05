@@ -148,7 +148,7 @@ async function callGroq(apiKey, model, systemPrompt, messages, options = {}) {
 
 async function callGroqJSON(apiKey, model, prompt) {
   const text = await callGroq(apiKey, model, null, [{ role: 'user', content: prompt }], {
-    maxTokens: 200,
+    maxTokens: 500,
     temperature: 0.1,
   });
   const match = text.match(/\{[\s\S]*\}/);
@@ -272,13 +272,13 @@ exports.handler = async function (event) {
     const history = (conversationHistory || []).slice(-8);
     if (!history.length) history.push({ role: 'user', content: message });
 
-    const patientResponse = await callGroq(
+    const patientResponse = (await callGroq(
       GROQ_API_KEY,
       GROQ_MODEL,
       caseData.patientPrompt,
       history,
       { maxTokens: 600, temperature: 0.72 }
-    );
+    )) || 'Sorry doctor, could you repeat that?';
 
     // ── BRANCH EVALUATION (scoring only) ──
     let scoreDelta = 0;
