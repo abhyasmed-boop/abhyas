@@ -128,11 +128,12 @@ async function callGroq(apiKey, model, systemPrompt, messages, options = {}) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
+        body: JSON.stringify({
       model,
       messages: msgs,
       max_tokens: maxTokens,
       temperature,
+      reasoning_effort: 'low',
     }),
   });
 
