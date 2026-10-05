@@ -34,8 +34,9 @@ async function callGroq(apiKey, model, prompt) {
     body: JSON.stringify({
       model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 600,
-      temperature: 0.3,
+      max_tokens: 1500,
+            temperature: 0.3,
+      reasoning_effort: 'low',
     }),
   });
   if (!res.ok) throw new Error(`Groq error: ${res.status}`);
@@ -55,8 +56,7 @@ exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   const GROQ_API_KEY = process.env.GROQ_API_KEY;
-  const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
-
+    const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
   if (!GROQ_API_KEY) return { statusCode: 500, headers, body: JSON.stringify({ error: 'GROQ_API_KEY not configured' }) };
 
   try {
