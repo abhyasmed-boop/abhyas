@@ -277,7 +277,7 @@ exports.handler = async function (event) {
       GROQ_MODEL,
       caseData.patientPrompt,
       history,
-      { maxTokens: 120, temperature: 0.72 }
+      { maxTokens: 600, temperature: 0.72 }
     );
 
     // ── BRANCH EVALUATION (scoring only) ──
