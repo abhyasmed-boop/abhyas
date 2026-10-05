@@ -275,7 +275,7 @@ exports.handler = async function (event) {
     const patientResponse = (await callGroq(
       GROQ_API_KEY,
       GROQ_MODEL,
-      caseData.patientPrompt,
+            'You are role-playing a PATIENT in a medical OPD. You are never the doctor or an assistant. Never ask "how can I help you" or offer help. Stay in character at all times. If greeted, reply briefly in character and mention your main complaint. ' + caseData.patientPrompt,
       history,
       { maxTokens: 600, temperature: 0.72 }
     )) || 'Sorry doctor, could you repeat that?';
