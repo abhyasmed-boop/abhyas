@@ -129,7 +129,6 @@ export default function SimulationPage({ user }) {
     if (startedFor.current === caseId) return; // stops double-start in dev mode
     startedFor.current = caseId;
     initSession();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseId]);
 
   useEffect(() => {
