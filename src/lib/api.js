@@ -1,31 +1,29 @@
 // All calls to Netlify backend functions
 
-export async function startSession(caseId, userId) {
-  const response = await fetch('/.netlify/functions/session', {
+async function post(path, payload, fallbackMessage) {
+  const response = await fetch(`/.netlify/functions/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ caseId, userId, action: 'start' })
+    body: JSON.stringify(payload)
   });
-  if (!response.ok) throw new Error((await response.json()).error || 'Could not start session');
+  if (!response.ok) {
+    let message = fallbackMessage;
+    try { message = (await response.json()).error || fallbackMessage; } catch (e) { /* keep fallback */ }
+    throw new Error(message);
+  }
   return response.json();
 }
 
-export async function sendSimulationTurn(sessionId, message) {
-  const response = await fetch('/.netlify/functions/simulate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId, message })
-  });
-  if (!response.ok) throw new Error((await response.json()).error || 'Simulation error');
-  return response.json();
+export function startSession(caseId, userId) {
+  return post('session', { caseId, userId, action: 'start' }, 'Could not start session');
 }
 
-export async function generateDebrief(sessionId) {
-  const response = await fetch('/.netlify/functions/debrief', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId })
-  });
-  if (!response.ok) throw new Error((await response.json()).error || 'Debrief error');
-  return response.json();
+// extras can carry: action, examId, test, conversationHistory, chaperoneArranged
+export function sendSimulationTurn(sessionId, message, extras = {}) {
+  return post('simulate', { sessionId, message, ...extras }, 'Simulation error');
+}
+
+// extras can carry: totalScore, transcript, flags, diagnosis, and so on
+export function generateDebrief(sessionId, extras = {}) {
+  return post('debrief', { sessionId, ...extras }, 'Debrief error');
 }
