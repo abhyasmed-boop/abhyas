@@ -68,7 +68,17 @@ const EXAM_SYSTEMS = [
     items: [
       { id: 'local_inspection', label: 'Inspect the site', askWhere: true },
       { id: 'local_palpation', label: 'Palpate the site', askWhere: true },
-      { id: 'local_movement', label: 'Movement / provocation at the site', askWhere: true },
+            { id: 'local_movement', label: 'Movement / provocation at the site', askWhere: true },
+    ],
+  },
+  {
+    id: 'intimate', label: 'Intimate examinations',
+    // intimate: true means a chaperone is ALWAYS needed, in every case.
+    items: [
+      { id: 'breast_exam', label: 'Breast examination', intimate: true },
+      { id: 'genital_exam', label: 'Genital examination', intimate: true },
+      { id: 'pelvic_exam', label: 'Pelvic / vaginal examination', intimate: true },
+      { id: 'rectal_exam', label: 'Digital rectal examination', intimate: true },
     ],
   },
 ];
