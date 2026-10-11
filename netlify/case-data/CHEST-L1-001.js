@@ -30,8 +30,7 @@ module.exports = {
   patient: { name: 'Sita Gurung', sex: 'female', age: 21 },
 
   // The final form the student fills in on "Give diagnosis"
-  finalForm: ['diagnosis', 'reasoning', 'management'],
-
+    finalForm: ['findings', 'diagnosis', 'reasoning', 'management'],
   diagnosis: {
     name: 'Costochondritis',    // shown ONLY in the debrief
     matchers: [/costochondritis/i, /costochondral (pain|syndrome)/i, /chest wall pain/i, /musculoskeletal chest/i],
@@ -124,8 +123,10 @@ module.exports = {
   // ───────────────────────── CHAPERONE ─────────────────────────
   chaperone: {
     required: true,
-    // Exams that need a chaperone (as in the authoring document: chest inspection and chest palpation)
-    items: ['cvs_inspection', 'cvs_palpation', 'resp_inspection', 'resp_palpation', 'local_inspection', 'local_palpation'],
+        // Chest exams in this young woman need a chaperone, including listening and percussion, because the chest is exposed.
+    // Intimate exams (breast, genital, pelvic, rectal) always need one, in every case, and local exams
+    // at a site marked intimate: true below also need one.
+    items: ['cvs_inspection', 'cvs_palpation', 'cvs_auscultation', 'resp_inspection', 'resp_palpation', 'resp_percussion', 'resp_auscultation'],
     refusalLine: 'Doctor, I am not comfortable. Can there be a nurse or female staff present please?',
     refusalNote: 'The patient has asked for a chaperone before this examination.',
     agreedLine: 'Okay, doctor.',
@@ -178,7 +179,8 @@ module.exports = {
   localExam: {
     sites: [
       {
-        id: 'cj_3_4',   // left 3rd and 4th costochondral junctions: the key finding
+                id: 'cj_3_4',   // left 3rd and 4th costochondral junctions: the key finding
+        intimate: true,
         match: t => /(3rd|third|4th|fourth|costochondral|\bcj\b)/i.test(t) && !/\bright\b/i.test(t),
         inspection: 'No swelling, no redness, no bruising over the left parasternal area. The skin looks completely normal.',
         palpation: {
@@ -188,14 +190,16 @@ module.exports = {
         movement: 'Sita says a very deep breath, or moving her left arm across her chest, brings the pain on a little.',
       },
       {
-        id: 'cj_other',
+                id: 'cj_other',
+        intimate: true,
         match: t => /(2nd|second|5th|fifth|\bright\b)/i.test(t),
         inspection: 'No swelling, no redness, no bruising.',
         palpation: { text: 'No tenderness at this site.' },
         movement: null,
       },
       {
-        id: 'chest_general',
+                id: 'chest_general',
+        intimate: true,
         match: t => /(chest|sternum|sternal|rib|parasternal|left side|breast)/i.test(t),
         inspection: 'Chest wall moves symmetrically. No visible swelling, redness or bruising. Skin over the left parasternal area looks normal.',
         palpation: { text: 'No tenderness on general pressure over the sternum and ribs. Sita says there is some discomfort on the left, but cannot say exactly where.' },
@@ -311,8 +315,10 @@ module.exports = {
         check: { type: 'key_finding_revealed', site: 'cj_3_4' },
         pass: 'You found tenderness at the left 3rd and 4th costochondral junctions, which reproduced her pain.',
         miss: 'You did not find the tenderness at the left 3rd and 4th costochondral junctions. Pressing there reproduces her pain, and no test can show this.' },
-      { id: 'no_inflammation_noted', domain: 'examination', points: 3, label: 'Stated that there is no swelling, warmth or redness',
-        check: { type: 'pending', needs: 'student_findings' }, pending: true,   // counted only once the student can write findings
+            { id: 'no_inflammation_noted', domain: 'examination', points: 3, label: 'Stated that there is no swelling, warmth or redness',
+        check: { type: 'judge', scope: 'final.findings', requires: { examAnyOf: ['local_inspection', 'resp_inspection', 'cvs_inspection'] },
+          question: 'Do the student’s written examination findings state that there is no swelling, no warmth and no redness (or no inflammation) over the tender area or the chest wall?',
+          doesNotCount: 'Only writing that the chest wall is tender, or only writing that the examination was normal.' },
         pass: 'You recorded that there is no swelling, warmth or redness.',
         miss: 'You did not record that there is no swelling, warmth or redness. This separates costochondritis from Tietze syndrome.' },
       { id: 'percussion_done', domain: 'examination', points: 2, label: 'Percussed the chest',
