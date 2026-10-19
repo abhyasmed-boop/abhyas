@@ -1,47 +1,45 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 // Students only ever see: symptom heading + "Case N" + duration.
-// Diagnosis names and level badges are deliberately NOT shown anywhere here.
-// Temporary list. It will be replaced by the case registry when the new case files are in.
-const CASES = [
-  { case_id: 'CHEST-L1-001', symptom_cluster: 'chest_pain', estimated_duration_minutes: 20 },
-  { case_id: 'CHEST-L1-002', symptom_cluster: 'chest_pain', estimated_duration_minutes: 20 },
-];
-
-const SYMPTOM_LABELS = { chest_pain: 'Chest Pain' };
-
-function symptomLabel(cluster) {
-  if (SYMPTOM_LABELS[cluster]) return SYMPTOM_LABELS[cluster];
-  const text = (cluster || 'general').replace(/_/g, ' ');
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-// "CHEST-L1-002" -> 2
-function caseNumber(caseId) {
-  const parts = (caseId || '').split('-');
-  const num = parseInt(parts[parts.length - 1], 10);
-  return Number.isNaN(num) ? null : num;
-}
+// The list comes from the server (the case registry). Diagnosis names and level badges are never sent or shown.
 
 export default function CaseLibrary({ user }) {
   const navigate = useNavigate();
+  const [cases, setCases] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => { loadCases(); }, []);
+
+  async function loadCases() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/.netlify/functions/cases');
+      if (!res.ok) throw new Error('Could not load the case list.');
+      const data = await res.json();
+      setCases(data.cases || []);
+    } catch (err) {
+      setError(err.message || 'Could not load the case list.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleLogout() {
     await supabase.auth.signOut();
   }
 
-  const grouped = CASES.reduce((acc, c) => {
-    const cluster = c.symptom_cluster || 'general';
-    if (!acc[cluster]) acc[cluster] = [];
-    acc[cluster].push(c);
+  // Group by symptom heading, ordered by case number
+  const grouped = cases.reduce((acc, c) => {
+    const key = c.symptomLabel || 'Other';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(c);
     return acc;
   }, {});
-
-  Object.values(grouped).forEach(list =>
-    list.sort((a, b) => (caseNumber(a.case_id) || 0) - (caseNumber(b.case_id) || 0))
-  );
+  Object.values(grouped).forEach(list => list.sort((a, b) => (a.number || 0) - (b.number || 0)));
 
   return (
     <div style={{ minHeight: '100vh', background: '#f7f5f0' }}>
@@ -70,52 +68,67 @@ export default function CaseLibrary({ user }) {
           Choose a case. You will meet an AI patient, take the history, examine, investigate and give your diagnosis.
         </div>
 
-        {Object.entries(grouped).map(([cluster, clusterCases]) => (
-          <div key={cluster} style={{ marginBottom: 28 }}>
+        {loading && (
+          <div style={{ textAlign: 'center', padding: '60px 0', color: '#a09890', fontSize: 13 }}>
+            Loading cases...
+          </div>
+        )}
+
+        {error && !loading && (
+          <div style={{ background: '#fbecec', border: '1px solid #f0a0a0', borderRadius: 10, padding: '14px 16px', fontSize: 13, color: '#7a1f1f' }}>
+            {error}
+            <div style={{ marginTop: 8 }}>
+              <button
+                onClick={loadCases}
+                style={{ background: '#fff', border: '1px solid #f0a0a0', borderRadius: 6, padding: '4px 12px', fontSize: 12, color: '#7a1f1f', cursor: 'pointer' }}
+              >Try again</button>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && Object.entries(grouped).map(([label, list]) => (
+          <div key={label} style={{ marginBottom: 28 }}>
             <div style={{
               fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.09em',
               color: '#a09890', fontFamily: 'monospace', marginBottom: 10
             }}>
-              {symptomLabel(cluster)}
+              {label}
             </div>
-            {clusterCases.map(c => {
-              const num = caseNumber(c.case_id);
-              return (
-                <div
-                  key={c.case_id}
-                  onClick={() => navigate(`/simulate/${c.case_id}`)}
-                  style={{
-                    background: '#fff', border: '0.5px solid #e0dbd2',
-                    borderRadius: 10, padding: '14px 18px', marginBottom: 8,
-                    display: 'grid', gridTemplateColumns: '1fr auto',
-                    gap: 12, alignItems: 'center',
-                    cursor: 'pointer', transition: 'border-color 0.15s'
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#2d5a3d'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#e0dbd2'; }}
-                >
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 500, color: '#1c1a16', marginBottom: 2 }}>
-                      {num ? `Case ${num}` : 'Case'}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#a09890' }}>
-                      ~{c.estimated_duration_minutes} min
-                    </div>
+            {list.map(c => (
+              <div
+                key={c.caseId}
+                onClick={() => navigate(`/simulate/${c.caseId}`)}
+                style={{
+                  background: '#fff', border: '0.5px solid #e0dbd2',
+                  borderRadius: 10, padding: '14px 18px', marginBottom: 8,
+                  display: 'grid', gridTemplateColumns: '1fr auto',
+                  gap: 12, alignItems: 'center',
+                  cursor: 'pointer', transition: 'border-color 0.15s'
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = '#2d5a3d'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#e0dbd2'; }}
+              >
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 500, color: '#1c1a16', marginBottom: 2 }}>
+                    Case {c.number}
                   </div>
-                  <button
-                    onClick={e => { e.stopPropagation(); navigate(`/simulate/${c.case_id}`); }}
-                    style={{
-                      background: '#2d5a3d', color: '#fff', border: 'none',
-                      borderRadius: 8, padding: '8px 16px', fontSize: 12,
-                      fontFamily: 'inherit', fontWeight: 500, cursor: 'pointer',
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    Start →
-                  </button>
+                  <div style={{ fontSize: 11, color: '#a09890' }}>
+                    ~{c.durationMinutes} min
+                  </div>
                 </div>
-              );
-            })}
+                <button
+                  onClick={e => { e.stopPropagation(); navigate(`/simulate/${c.caseId}`); }}
+                  style={{
+                    background: '#2d5a3d', color: '#fff', border: 'none',
+                    borderRadius: 8, padding: '8px 16px', fontSize: 12,
+                    fontFamily: 'inherit', fontWeight: 500, cursor: 'pointer',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  Start →
+                </button>
+              </div>
+            ))}
           </div>
         ))}
       </div>
