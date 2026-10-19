@@ -24,6 +24,11 @@ export function sendSimulationTurn(sessionId, message, extras = {}) {
 }
 
 // extras can carry: totalScore, transcript, flags, diagnosis, and so on
+// The new consultation engine (consult.js)
+export function sendConsultTurn(sessionId, message, extras = {}) {
+  return post('consult', { sessionId, message, ...extras }, 'Simulation error');
+}
+
 export function generateDebrief(sessionId, extras = {}) {
   return post('debrief', { sessionId, ...extras }, 'Debrief error');
 }
