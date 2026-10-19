@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { startSession, sendSimulationTurn } from '../lib/api';
+import { startSession, sendConsultTurn } from '../lib/api';
 
 const SYMPTOM_NAMES = { CHEST: 'Chest Pain' };
 
-// Any of these words means the student has arranged a chaperone
-const CHAPERONE_WORDS = /\b(nurse|chaperone|female (staff|nurse|attendant|colleague)|staff member)\b/i;
+const FIELD_INFO = {
+  findings: { label: 'Examination findings', hint: 'What did you find? Write only what you actually found.', rows: 3 },
+  diagnosis: { label: 'Diagnosis', hint: 'Your main diagnosis.', rows: 2 },
+  reasoning: { label: 'Reasoning', hint: 'Why this diagnosis? Which other diagnoses did you consider, and why did you rule them out?', rows: 4 },
+  management: { label: 'Management and advice', hint: 'Explain to the patient in plain words what is wrong. Then give treatment, advice, follow-up, and when to return urgently.', rows: 5 },
+};
 
 const CSS = `
 .abhyas-chat { height: 100vh; height: 100dvh; }
@@ -15,9 +19,10 @@ const CSS = `
 .abhyas-dot:nth-child(2) { animation-delay: .2s; }
 .abhyas-dot:nth-child(3) { animation-delay: .4s; }
 .abhyas-pill:hover:not(:disabled) { background: #e8f5ed; }
-.abhyas-opt:hover { background: #f1f6f2; }
+.abhyas-opt:hover:not(:disabled) { background: #f1f6f2; }
 `;
 
+// Used only until the server tells us the real heading
 function caseHeading(caseId) {
   const parts = (caseId || '').split('-');
   const symptom = SYMPTOM_NAMES[parts[0]] || 'Clinical case';
@@ -61,7 +66,7 @@ function Card({ bg, border, color, title, children }) {
   );
 }
 
-function Sheet({ title, onClose, children }) {
+function Sheet({ title, onClose, tall, children }) {
   return (
     <div
       onClick={onClose}
@@ -74,7 +79,7 @@ function Sheet({ title, onClose, children }) {
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          background: '#fff', width: '100%', maxWidth: 680, maxHeight: '75vh',
+          background: '#fff', width: '100%', maxWidth: 680, maxHeight: tall ? '90vh' : '75vh',
           overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: '16px 16px 24px'
         }}
       >
@@ -108,22 +113,23 @@ export default function SimulationPage({ user }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sessionId, setSessionId] = useState(null);
+  const [heading, setHeading] = useState(caseHeading(caseId));
+  const [finalForm, setFinalForm] = useState(['findings', 'diagnosis', 'reasoning', 'management']);
   const [vitals, setVitals] = useState(null);
-  const [chaperone, setChaperone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [isTerminal, setIsTerminal] = useState(false);
+  const [debriefReady, setDebriefReady] = useState(null); // set when the student must press a button to continue
   const [briefed, setBriefed] = useState(false);
-  const [menu, setMenu] = useState({ exams: [], tests: [] });
-  const [panel, setPanel] = useState(null); // null | 'exam' | 'tests' | 'diagnose'
-  const [examText, setExamText] = useState('');
-  const [dxText, setDxText] = useState('');
+  const [menu, setMenu] = useState({ systems: [], tests: [] });
+  const [panel, setPanel] = useState(null); // null | 'exam' | 'tests' | 'finish'
+  const [examSystem, setExamSystem] = useState(null);
+  const [where, setWhere] = useState('');
+  const [form, setForm] = useState({ findings: '', diagnosis: '', reasoning: '', management: '' });
   const bottomRef = useRef(null);
   const startedFor = useRef(null);
-  const flagsRef = useRef(new Set());   // events the server flagged (used by the debrief)
-  const logRef = useRef([]);            // full record of the consultation
-  const examsRef = useRef([]);
-  const testsRef = useRef([]);
+  const stateRef = useRef(null);  // the server's record of the session; sent back on every turn
+  const logRef = useRef([]);      // the full record of the consultation, for the debrief
 
   useEffect(() => {
     if (startedFor.current === caseId) return; // stops double-start in dev mode
@@ -133,26 +139,30 @@ export default function SimulationPage({ user }) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, sending, briefed]);
+  }, [messages, sending, briefed, debriefReady]);
 
   async function initSession() {
     setLoading(true);
     setMessages([]);
     setVitals(null);
-    setChaperone(false);
     setIsTerminal(false);
+    setDebriefReady(null);
     setBriefed(false);
-    flagsRef.current = new Set();
+    setPanel(null);
+    setExamSystem(null);
+    setWhere('');
+    setForm({ findings: '', diagnosis: '', reasoning: '', management: '' });
+    stateRef.current = null;
     logRef.current = [];
-    examsRef.current = [];
-    testsRef.current = [];
     try {
       const session = await startSession(caseId, user.id);
       setSessionId(session.sessionId);
+      if (session.symptomLabel) setHeading(`${session.symptomLabel} · Case ${session.caseNumber}`);
+      if (Array.isArray(session.finalForm) && session.finalForm.length) setFinalForm(session.finalForm);
       addMessage('opening', session.openingText);
       try {
-        const m = await sendSimulationTurn(session.sessionId, '', { action: 'menu' });
-        setMenu({ exams: m.exams || [], tests: m.tests || [] });
+        const m = await sendConsultTurn(session.sessionId, '', { action: 'menu' });
+        setMenu({ systems: m.systems || [], tests: m.tests || [] });
       } catch (e) {
         addMessage('system', 'Could not load the examination and test lists. Please refresh the page.');
       }
@@ -169,20 +179,14 @@ export default function SimulationPage({ user }) {
     }]);
   }
 
-  // One function for every kind of turn: talk, examine, order, vitals, diagnose
+  // One function for every kind of turn: talk, examine, order, vitals, finish
   async function runTurn({ action = 'talk', text = '', extras = {}, label = null }) {
     if (sending || isTerminal || !sessionId) return;
 
-    // Chaperone: once mentioned, stays arranged for the whole session
-    const chaperoneNow = chaperone || CHAPERONE_WORDS.test(text);
-    const chaperoneJustArranged = chaperoneNow && !chaperone;
-    if (chaperoneJustArranged) setChaperone(true);
-
-    // Only real conversation goes to the AI patient
+    // Only real conversation goes to the server as history. The new message is NOT included.
     const history = messages
       .filter(m => (m.role === 'student' || m.role === 'patient') && !m.skipHistory)
       .map(m => ({ role: m.role === 'student' ? 'user' : 'assistant', content: m.content }));
-    if (action === 'talk') history.push({ role: 'user', content: text });
 
     setSending(true);
     if (action === 'talk') {
@@ -192,21 +196,22 @@ export default function SimulationPage({ user }) {
       addMessage('action', label);
       logRef.current.push({ role: 'user', content: `[ACTION] ${label}` });
     }
-    if (chaperoneJustArranged) addMessage('note', 'A nurse is now present in the room.');
 
     try {
-      const result = await sendSimulationTurn(sessionId, text, {
+      const result = await sendConsultTurn(sessionId, text, {
         action,
         conversationHistory: history,
-        chaperoneArranged: chaperoneNow,
+        state: stateRef.current,
         ...extras,
       });
 
-      (result.flags || []).forEach(f => flagsRef.current.add(f));
+      if (result.state) stateRef.current = result.state;
 
+      if ((result.events || []).includes('chaperone_arranged')) {
+        addMessage('note', 'A nurse is now present in the room.');
+      }
       if (result.patientResponse) {
-        const blocked = (result.flags || []).includes('chaperone_needed');
-        addMessage('patient', result.patientResponse, { skipHistory: blocked });
+        addMessage('patient', result.patientResponse, { skipHistory: !!result.consequenceTriggered });
         logRef.current.push({ role: 'assistant', content: result.patientResponse });
       }
       if (result.vitalsRevealed && result.vitalsData) {
@@ -217,12 +222,10 @@ export default function SimulationPage({ user }) {
       }
       if (result.examResult) {
         addMessage('exam', result.examResult);
-        examsRef.current.push(result.examResult.name);
         logRef.current.push({ role: 'assistant', content: `[EXAM FINDING] ${result.examResult.name}: ${result.examResult.text}` });
       }
       if (result.assetRevealed) {
         addMessage('asset', result.assetRevealed);
-        testsRef.current.push(result.assetRevealed.name);
         logRef.current.push({ role: 'assistant', content: `[TEST RESULT] ${result.assetRevealed.name}: ${result.assetRevealed.text}` });
       }
       if (result.consequenceTriggered && result.consequenceText) {
@@ -232,16 +235,20 @@ export default function SimulationPage({ user }) {
 
       if (result.terminalReached) {
         setIsTerminal(true);
-        addMessage('system', 'Consultation complete. Generating your debrief...');
-        const state = {
+        const payload = {
+          caseId,
+          state: stateRef.current,
           transcript: logRef.current,
-          flags: Array.from(flagsRef.current),
-          diagnosis: text,
-          diagnosisCorrect: result.diagnosisCorrect,
-          examsDone: examsRef.current,
-          testsOrdered: testsRef.current,
+          endedBy: result.endedBy || 'diagnosis',
+          endSequence: result.endSequence || [],
         };
-        setTimeout(() => navigate(`/debrief/${sessionId}`, { state }), 2000);
+        if (payload.endSequence.length) {
+          addMessage('narration', payload.endSequence);
+          setDebriefReady(payload);
+        } else {
+          addMessage('system', 'Consultation complete. Generating your feedback...');
+          setTimeout(() => navigate(`/debrief/${sessionId}`, { state: payload }), 1500);
+        }
       }
     } catch (err) {
       addMessage('system', `Error: ${err.message}`);
@@ -261,35 +268,35 @@ export default function SimulationPage({ user }) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   }
 
+  function closePanel() {
+    setPanel(null);
+    setExamSystem(null);
+  }
+
   function doVitals() {
     if (vitals) { addMessage('note', 'Vital signs are already shown above.'); return; }
     runTurn({ action: 'vitals', label: 'Check vital signs' });
   }
 
-  function doExamMenu(item) {
-    setPanel(null);
-    runTurn({ action: 'examine', extras: { examId: item.id }, label: `Examine: ${item.label}` });
-  }
-
-  function doExamTyped() {
-    const t = examText.trim();
-    if (!t) return;
-    setPanel(null);
-    setExamText('');
-    runTurn({ action: 'examine', text: t, label: `Examine: ${t}` });
+  function doExam(item, systemLabel) {
+    const w = where.trim();
+    closePanel();
+    setWhere('');
+    const label = item.askWhere
+      ? `Examine: ${item.label} (${w})`
+      : `Examine: ${systemLabel} · ${item.label}`;
+    runTurn({ action: 'examine', text: w, extras: { examId: item.id, text: w }, label });
   }
 
   function doTest(name) {
-    setPanel(null);
+    closePanel();
     runTurn({ action: 'order', extras: { test: name }, label: `Order test: ${name}` });
   }
 
-  function doDiagnose() {
-    const t = dxText.trim();
-    if (t.length < 3) return;
-    setPanel(null);
-    setDxText('');
-    runTurn({ action: 'diagnose', text: t, label: `My diagnosis: ${t}` });
+  function doFinish() {
+    if (form.diagnosis.trim().length < 3) return;
+    closePanel();
+    runTurn({ action: 'diagnose', extras: { form }, label: 'I have finished the consultation.' });
   }
 
   function renderMessage(msg) {
@@ -358,6 +365,17 @@ export default function SimulationPage({ user }) {
             {msg.content}
           </Card>
         );
+      case 'narration':
+        return (
+          <div key={msg.id} style={{
+            alignSelf: 'center', width: '95%', background: '#2b2622', color: '#f1ebe0',
+            borderRadius: 10, padding: '16px 18px', fontSize: 13, lineHeight: 1.7
+          }}>
+            {msg.content.map((line, i) => (
+              <div key={i} style={{ marginBottom: 8 }}>{line}</div>
+            ))}
+          </div>
+        );
       case 'system':
         return (
           <Card key={msg.id} bg="#fdf3e7" border="#f0c87a" color="#7a4a0e">{msg.content}</Card>
@@ -387,18 +405,18 @@ export default function SimulationPage({ user }) {
             Before you begin
           </div>
           <div style={{ fontSize: 24, fontWeight: 600, color: '#2d5a3d', margin: '4px 0 16px' }}>
-            {caseHeading(caseId)}
+            {heading}
           </div>
           <div style={{ background: '#fff', border: '1px solid #e0dbd2', borderRadius: 12, padding: '18px 20px', fontSize: 14, lineHeight: 1.7, color: '#1c1a16' }}>
             <p style={{ marginBottom: 10 }}>
-              You are the doctor. The patient is an AI-played standardized patient, who will answer as a real patient would.
+              You are the doctor. The patient is an AI-played standardized patient, who answers as a real patient would.
             </p>
             <div style={{ fontWeight: 600, marginBottom: 6 }}>Your task</div>
             <ol style={{ paddingLeft: 20, marginBottom: 12 }}>
               <li><strong>Talk to the patient.</strong> Type your questions in English, one at a time, as you would in a real OPD. The patient answers only what you ask.</li>
-              <li><strong>Examine.</strong> Use the <em>Examine</em> button to choose what to examine, or describe it yourself.</li>
+              <li><strong>Examine.</strong> Use the <em>Examine</em> button. Choose a system, then what you want to do. For the local exam, say exactly where.</li>
               <li><strong>Investigate.</strong> Use <em>Order test</em> only if you think a test is needed.</li>
-              <li><strong>Give your diagnosis.</strong> When you are ready, press <em>Give diagnosis</em>. This ends the consultation and opens your feedback.</li>
+              <li><strong>Finish.</strong> Press <em>Finish consultation</em> when you are ready. You will write your findings, diagnosis, reasoning and management plan. This ends the consultation and opens your feedback.</li>
             </ol>
             <p style={{ fontSize: 13, color: '#6b6459' }}>
               About 20 minutes. Your professional conduct and communication are assessed along with your clinical reasoning. Behave as you would with a real patient.
@@ -435,10 +453,17 @@ export default function SimulationPage({ user }) {
     cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1,
     whiteSpace: 'nowrap', fontFamily: 'inherit'
   };
+  const optStyle = {
+    background: '#fff', border: '1px solid #e0dbd2', borderRadius: 10,
+    padding: '10px 12px', fontSize: 13, textAlign: 'left', cursor: 'pointer',
+    color: '#1c1a16', fontFamily: 'inherit'
+  };
   const testGroups = menu.tests.reduce((acc, t) => {
     (acc[t.group] = acc[t.group] || []).push(t);
     return acc;
   }, {});
+  const activeSystem = menu.systems.find(s => s.id === examSystem) || null;
+  const systemHasWhere = !!activeSystem && activeSystem.items.some(i => i.askWhere);
 
   return (
     <div className="abhyas-chat" style={{ display: 'flex', flexDirection: 'column', background: '#ece7dc' }}>
@@ -468,7 +493,7 @@ export default function SimulationPage({ user }) {
           </svg>
         </div>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>{caseHeading(caseId)}</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>{heading}</div>
           <div style={{ fontSize: 11, opacity: 0.8 }}>{sending ? 'typing…' : 'Patient'}</div>
         </div>
       </div>
@@ -506,100 +531,128 @@ export default function SimulationPage({ user }) {
         </div>
       </div>
 
-      {/* Action buttons */}
-      <div style={{ background: '#f4f1e8', borderTop: '1px solid #e0dbd2', padding: '8px 12px 0', flexShrink: 0 }}>
-        <div style={{ maxWidth: 680, margin: '0 auto', display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
-          <button className="abhyas-pill" disabled={busy} onClick={doVitals} style={pillStyle}>🩸 Vitals</button>
-          <button className="abhyas-pill" disabled={busy} onClick={() => setPanel('exam')} style={pillStyle}>🩺 Examine</button>
-          <button className="abhyas-pill" disabled={busy} onClick={() => setPanel('tests')} style={pillStyle}>📋 Order test</button>
-          <button
-            className="abhyas-pill" disabled={busy} onClick={() => setPanel('diagnose')}
-            style={{ ...pillStyle, background: '#2d5a3d', color: '#fff', borderColor: '#2d5a3d' }}
-          >✅ Give diagnosis</button>
-        </div>
-      </div>
-
-      {/* Input bar */}
-      <div style={{ background: '#f4f1e8', padding: '8px 12px', flexShrink: 0 }}>
-        <div style={{ maxWidth: 680, margin: '0 auto', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-          <textarea
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={isTerminal ? 'Generating debrief...' : 'Type a message to the patient...'}
-            disabled={busy}
-            rows={1}
-            style={{
-              flex: 1, border: '1px solid #e0dbd2', borderRadius: 20,
-              padding: '10px 16px', fontSize: 14, fontFamily: 'inherit',
-              color: '#1c1a16', outline: 'none', resize: 'none',
-              background: '#fff', maxHeight: 120
-            }}
-          />
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            aria-label="Send"
-            style={{
-              width: 42, height: 42, borderRadius: '50%', border: 'none',
-              background: '#2d5a3d', cursor: canSend ? 'pointer' : 'not-allowed',
-              opacity: canSend ? 1 : 0.5, flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 19V5M5 12l7-7 7 7" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* Examine sheet */}
-      {panel === 'exam' && (
-        <Sheet title="What do you want to examine?" onClose={() => setPanel(null)}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
-            {menu.exams.map(item => (
-              <button
-                key={item.id}
-                className="abhyas-opt"
-                onClick={() => doExamMenu(item)}
-                style={{
-                  background: '#fff', border: '1px solid #e0dbd2', borderRadius: 10,
-                  padding: '10px 12px', fontSize: 13, textAlign: 'left', cursor: 'pointer',
-                  color: '#1c1a16', fontFamily: 'inherit'
-                }}
-              >{item.label}</button>
-            ))}
-          </div>
-          <div style={{ fontSize: 12, color: '#6b6459', margin: '16px 0 6px' }}>
-            Or describe exactly what you want to do:
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              value={examText}
-              onChange={e => setExamText(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') doExamTyped(); }}
-              placeholder="e.g. palpate the chest wall"
-              style={{
-                flex: 1, border: '1px solid #e0dbd2', borderRadius: 8, padding: '10px 12px',
-                fontSize: 14, fontFamily: 'inherit', outline: 'none'
-              }}
-            />
+      {debriefReady ? (
+        /* The case ended with a narrated consequence: let the student read it, then continue */
+        <div style={{ background: '#f4f1e8', borderTop: '1px solid #e0dbd2', padding: '12px', flexShrink: 0 }}>
+          <div style={{ maxWidth: 680, margin: '0 auto' }}>
             <button
-              onClick={doExamTyped}
-              disabled={!examText.trim()}
+              onClick={() => navigate(`/debrief/${sessionId}`, { state: debriefReady })}
               style={{
-                background: '#2d5a3d', color: '#fff', border: 'none', borderRadius: 8,
-                padding: '0 18px', fontSize: 13, cursor: 'pointer', opacity: examText.trim() ? 1 : 0.5
+                width: '100%', background: '#2d5a3d', color: '#fff', border: 'none',
+                borderRadius: 10, padding: '14px', fontSize: 15, fontWeight: 500, cursor: 'pointer'
               }}
-            >Go</button>
+            >
+              See my feedback
+            </button>
           </div>
+        </div>
+      ) : (
+        <>
+          {/* Action buttons */}
+          <div style={{ background: '#f4f1e8', borderTop: '1px solid #e0dbd2', padding: '8px 12px 0', flexShrink: 0 }}>
+            <div style={{ maxWidth: 680, margin: '0 auto', display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+              <button className="abhyas-pill" disabled={busy} onClick={doVitals} style={pillStyle}>🩸 Vitals</button>
+              <button className="abhyas-pill" disabled={busy} onClick={() => { setExamSystem(null); setPanel('exam'); }} style={pillStyle}>🩺 Examine</button>
+              <button className="abhyas-pill" disabled={busy} onClick={() => setPanel('tests')} style={pillStyle}>📋 Order test</button>
+              <button
+                className="abhyas-pill" disabled={busy} onClick={() => setPanel('finish')}
+                style={{ ...pillStyle, background: '#2d5a3d', color: '#fff', borderColor: '#2d5a3d' }}
+              >✅ Finish consultation</button>
+            </div>
+          </div>
+
+          {/* Input bar */}
+          <div style={{ background: '#f4f1e8', padding: '8px 12px', flexShrink: 0 }}>
+            <div style={{ maxWidth: 680, margin: '0 auto', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+              <textarea
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={isTerminal ? 'Consultation finished' : 'Type a message to the patient...'}
+                disabled={busy}
+                rows={1}
+                style={{
+                  flex: 1, border: '1px solid #e0dbd2', borderRadius: 20,
+                  padding: '10px 16px', fontSize: 14, fontFamily: 'inherit',
+                  color: '#1c1a16', outline: 'none', resize: 'none',
+                  background: '#fff', maxHeight: 120
+                }}
+              />
+              <button
+                onClick={handleSend}
+                disabled={!canSend}
+                aria-label="Send"
+                style={{
+                  width: 42, height: 42, borderRadius: '50%', border: 'none',
+                  background: '#2d5a3d', cursor: canSend ? 'pointer' : 'not-allowed',
+                  opacity: canSend ? 1 : 0.5, flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 19V5M5 12l7-7 7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Examine sheet: choose a system, then what to do */}
+      {panel === 'exam' && (
+        <Sheet title={activeSystem ? activeSystem.label : 'What do you want to examine?'} onClose={closePanel}>
+          {!activeSystem ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+              {menu.systems.map(s => (
+                <button key={s.id} className="abhyas-opt" onClick={() => setExamSystem(s.id)} style={optStyle}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div>
+              <button
+                onClick={() => setExamSystem(null)}
+                style={{ background: 'none', border: 'none', color: '#6b6459', fontSize: 12, cursor: 'pointer', padding: 0, marginBottom: 10 }}
+              >← All systems</button>
+              {systemHasWhere && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, color: '#6b6459', marginBottom: 6 }}>
+                    Say exactly where, in your own words, then choose what to do:
+                  </div>
+                  <input
+                    value={where}
+                    onChange={e => setWhere(e.target.value)}
+                    placeholder="Where exactly?"
+                    style={{
+                      width: '100%', border: '1px solid #e0dbd2', borderRadius: 8, padding: '10px 12px',
+                      fontSize: 14, fontFamily: 'inherit', outline: 'none'
+                    }}
+                  />
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+                {activeSystem.items.map(item => {
+                  const blocked = item.askWhere && !where.trim();
+                  return (
+                    <button
+                      key={item.id}
+                      className="abhyas-opt"
+                      disabled={blocked}
+                      onClick={() => doExam(item, activeSystem.label)}
+                      style={{ ...optStyle, opacity: blocked ? 0.45 : 1, cursor: blocked ? 'not-allowed' : 'pointer' }}
+                    >{item.label}</button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </Sheet>
       )}
 
       {/* Order test sheet */}
       {panel === 'tests' && (
-        <Sheet title="Order a test" onClose={() => setPanel(null)}>
+        <Sheet title="Order a test" onClose={closePanel}>
           {Object.entries(testGroups).map(([group, items]) => (
             <div key={group} style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#a09890', fontFamily: 'monospace', marginBottom: 6 }}>
@@ -610,11 +663,7 @@ export default function SimulationPage({ user }) {
                   key={t.name}
                   className="abhyas-opt"
                   onClick={() => doTest(t.name)}
-                  style={{
-                    display: 'block', width: '100%', background: '#fff', border: '1px solid #e0dbd2',
-                    borderRadius: 10, padding: '10px 12px', fontSize: 13, textAlign: 'left',
-                    cursor: 'pointer', color: '#1c1a16', marginBottom: 6, fontFamily: 'inherit'
-                  }}
+                  style={{ ...optStyle, display: 'block', width: '100%', marginBottom: 6 }}
                 >{t.name}</button>
               ))}
             </div>
@@ -622,29 +671,37 @@ export default function SimulationPage({ user }) {
         </Sheet>
       )}
 
-      {/* Diagnosis sheet */}
-      {panel === 'diagnose' && (
-        <Sheet title="Give your diagnosis" onClose={() => setPanel(null)}>
-          <div style={{ fontSize: 13, color: '#6b6459', lineHeight: 1.6, marginBottom: 10 }}>
-            Write your diagnosis and the main reasons for it. <strong>This ends the consultation</strong>, and you cannot ask or examine anything more.
+      {/* Finish sheet */}
+      {panel === 'finish' && (
+        <Sheet title="Finish the consultation" onClose={closePanel} tall>
+          <div style={{ fontSize: 13, color: '#6b6459', lineHeight: 1.6, marginBottom: 12 }}>
+            Write your record of the consultation. <strong>This ends the consultation</strong>: you cannot ask or examine anything more.
           </div>
-          <textarea
-            value={dxText}
-            onChange={e => setDxText(e.target.value)}
-            rows={4}
-            placeholder="My diagnosis is... because..."
-            style={{
-              width: '100%', border: '1px solid #e0dbd2', borderRadius: 8, padding: '10px 12px',
-              fontSize: 14, fontFamily: 'inherit', outline: 'none', resize: 'vertical'
-            }}
-          />
+          {finalForm.map(key => {
+            const info = FIELD_INFO[key] || { label: key, hint: '', rows: 3 };
+            return (
+              <div key={key} style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#1c1a16', marginBottom: 2 }}>{info.label}</div>
+                <div style={{ fontSize: 12, color: '#8a8478', marginBottom: 4 }}>{info.hint}</div>
+                <textarea
+                  value={form[key] || ''}
+                  onChange={e => setForm(prev => ({ ...prev, [key]: e.target.value }))}
+                  rows={info.rows}
+                  style={{
+                    width: '100%', border: '1px solid #e0dbd2', borderRadius: 8, padding: '10px 12px',
+                    fontSize: 14, fontFamily: 'inherit', outline: 'none', resize: 'vertical'
+                  }}
+                />
+              </div>
+            );
+          })}
           <button
-            onClick={doDiagnose}
-            disabled={dxText.trim().length < 3}
+            onClick={doFinish}
+            disabled={form.diagnosis.trim().length < 3}
             style={{
-              marginTop: 10, width: '100%', background: '#2d5a3d', color: '#fff', border: 'none',
+              marginTop: 4, width: '100%', background: '#2d5a3d', color: '#fff', border: 'none',
               borderRadius: 10, padding: '12px', fontSize: 14, fontWeight: 500, cursor: 'pointer',
-              opacity: dxText.trim().length < 3 ? 0.5 : 1
+              opacity: form.diagnosis.trim().length < 3 ? 0.5 : 1
             }}
           >Submit and end consultation</button>
         </Sheet>
