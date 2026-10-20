@@ -305,3 +305,135 @@ export default function DebriefPage({ user }) {
                     ? `Could not confirm whether this applies: ${p.text}`
                     : p.text}
                 </div>
+                <div style={{ fontFamily: 'monospace', color: '#6b6459' }}>
+                  {p.status === 'unclear' ? '—' : p.points}
+                </div>
+              </div>
+            ))}
+          </Card>
+        )}
+
+        {/* What the patient would have told you */}
+        {r.missedTopics && r.missedTopics.length > 0 && (
+          <Card>
+            <details>
+              <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#1c1a16' }}>
+                What the patient would have told you if you had asked ({r.missedTopics.length})
+              </summary>
+              <div style={{ marginTop: 10 }}>
+                {r.missedTopics.map(t => (
+                  <div key={t.id} style={{ padding: '8px 0', borderTop: '0.5px solid #efebe3' }}>
+                    <div style={{ fontSize: 12, color: '#a09890', marginBottom: 2 }}>If you had asked about: {t.label}</div>
+                    <div style={{ fontSize: 13, lineHeight: 1.6, color: '#3f3b34', fontStyle: 'italic' }}>{t.say}</div>
+                    {t.variantSay && (
+                      <div style={{ fontSize: 12.5, lineHeight: 1.6, color: '#6b6459', marginTop: 4 }}>
+                        After a promise of privacy: <span style={{ fontStyle: 'italic' }}>{t.variantSay}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </Card>
+        )}
+
+        {/* Teaching */}
+        {r.teaching && (
+          <>
+            {r.teaching.keyLesson && (
+              <Card>
+                <Label>The key clinical lesson</Label>
+                <div style={{ fontSize: 13, lineHeight: 1.8, color: '#1c1a16' }}>{r.teaching.keyLesson}</div>
+              </Card>
+            )}
+            {(r.teaching.teachingPoints || []).length > 0 && (
+              <Card>
+                <Label>Teaching points</Label>
+                {r.teaching.teachingPoints.map(t => (
+                  <div key={t.id} style={{ padding: '8px 0', borderTop: '0.5px solid #efebe3' }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: '#1c1a16', marginBottom: 2 }}>{t.title}</div>
+                    <div style={{ fontSize: 13, lineHeight: 1.7, color: '#3f3b34' }}>{t.text}</div>
+                  </div>
+                ))}
+              </Card>
+            )}
+            {r.teaching.managementPlan && (
+              <Card>
+                <Label>A usual management plan</Label>
+                <div style={{ fontSize: 13, lineHeight: 1.8, color: '#1c1a16' }}>{r.teaching.managementPlan}</div>
+              </Card>
+            )}
+            {r.teaching.safetyNet && (
+              <Card style={{ borderColor: '#a8d4b5', background: '#f4faf6' }}>
+                <Label>Safety net: always give this</Label>
+                <div style={{ fontSize: 13, lineHeight: 1.8, color: '#1c1a16' }}>{r.teaching.safetyNet}</div>
+              </Card>
+            )}
+          </>
+        )}
+
+        {/* Your own record */}
+        <Card>
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 500, color: '#1c1a16' }}>
+              Your record of this consultation
+            </summary>
+            <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.7, color: '#3f3b34' }}>
+              {[['Examination findings', r.record.final.findings], ['Diagnosis', r.record.final.diagnosis],
+                ['Reasoning', r.record.final.reasoning], ['Management', r.record.final.management]].map(([k, v]) => (
+                <div key={k} style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: '#a09890', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{k}</div>
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{v || '(nothing written)'}</div>
+                </div>
+              ))}
+              <div style={{ fontSize: 12, color: '#6b6459', marginTop: 8 }}>
+                Messages you sent: {r.record.messageCount}. Vital signs checked: {r.record.vitalsChecked ? 'yes' : 'no'}.
+              </div>
+              <div style={{ fontSize: 12, color: '#6b6459', marginTop: 4 }}>
+                Examinations, in your order: {r.record.examOrder.length ? r.record.examOrder.join(' → ') : 'none'}.
+              </div>
+              <div style={{ fontSize: 12, color: '#6b6459', marginTop: 4 }}>
+                Tests ordered: {r.record.tests.length ? r.record.tests.join(', ') : 'none'}.
+              </div>
+            </div>
+          </details>
+        </Card>
+
+        {/* How this feedback was made */}
+        <div style={{ fontSize: 11.5, lineHeight: 1.7, color: '#a09890', margin: '4px 2px 16px' }}>
+          How this feedback was made: your score is worked out by fixed rules from what happened in your consultation.
+          Items that depend on your wording are checked by two AI examiners that must agree and must quote your own words.
+          When they cannot, we say “could not confirm” and do not guess. The teaching text is fixed for each case and is not written by AI.
+          Abhyas is in testing, so please tell us if anything here looks wrong.
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            onClick={() => navigate(`/simulate/${r.caseId}`)}
+            style={{
+              background: '#2d5a3d', color: '#fff', border: 'none', borderRadius: 8,
+              padding: '12px 24px', fontSize: 13, fontFamily: 'inherit', fontWeight: 500, cursor: 'pointer'
+            }}
+          >Run again</button>
+          <button
+            onClick={() => navigate('/')}
+            style={{
+              background: '#fff', color: '#1c1a16', border: '1px solid #e0dbd2', borderRadius: 8,
+              padding: '12px 24px', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer'
+            }}
+          >Case library</button>
+          <a
+            href={FEEDBACK_FORM_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'inline-flex', alignItems: 'center', background: '#fff', color: '#1c1a16',
+              border: '1px solid #e0dbd2', borderRadius: 8, padding: '12px 24px', fontSize: 13,
+              fontFamily: 'inherit', textDecoration: 'none'
+            }}
+          >Report a mistake ↗</a>
+        </div>
+      </div>
+    </div>
+  );
+}
