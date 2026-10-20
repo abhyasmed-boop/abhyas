@@ -1,141 +1,307 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { generateDebrief } from '../lib/api';
 
-const DOMAIN_LABELS = {
-  history: 'History',
-  examination: 'Examination',
-  conduct: 'Conduct',
-  communication: 'Communication',
-  reasoning: 'Reasoning'
+// Replace with your own feedback form when you have one
+const FEEDBACK_FORM_URL = 'https://forms.google.com';
+
+const STATUS = {
+  met: { icon: '✓', color: '#2d5a3d', bg: '#e8f5ed', border: '#a8d4b5' },
+  not_met: { icon: '✗', color: '#7a1f1f', bg: '#fbecec', border: '#f0a0a0' },
+  unclear: { icon: '?', color: '#7a4a0e', bg: '#fdf3e7', border: '#f0c87a' },
 };
+
+function cacheKey(id) { return `abhyas_debrief_${id}`; }
+function readCache(id) {
+  try { const raw = sessionStorage.getItem(cacheKey(id)); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+}
+function writeCache(id, value) {
+  try { sessionStorage.setItem(cacheKey(id), JSON.stringify(value)); } catch (e) { /* ignore */ }
+}
+
+function Card({ children, style }) {
+  return (
+    <div style={{
+      background: '#fff', border: '0.5px solid #e0dbd2', borderRadius: 10,
+      padding: '16px 18px', marginBottom: 12, ...style
+    }}>{children}</div>
+  );
+}
+
+function Label({ children }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 500, color: '#a09890', textTransform: 'uppercase',
+      letterSpacing: '0.07em', marginBottom: 8
+    }}>{children}</div>
+  );
+}
 
 export default function DebriefPage({ user }) {
   const { sessionId } = useParams();
   const navigate = useNavigate();
-  const [debrief, setDebrief] = useState(null);
+  const location = useLocation();
+  const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [missing, setMissing] = useState(false);
+  const startedFor = useRef(null);
 
-  useEffect(() => { loadDebrief(); }, [sessionId]);
+  useEffect(() => {
+    if (startedFor.current === sessionId) return; // stops a double call in dev mode
+    startedFor.current = sessionId;
+    load();
+    // eslint-disable-next-line
+  }, [sessionId]);
 
-  async function loadDebrief() {
+  async function load() {
+    setLoading(true);
+    setError(null);
+    setMissing(false);
     try {
-      const result = await generateDebrief(sessionId);
-      setDebrief(result);
+      const cached = readCache(sessionId);
+      if (cached) { setReport(cached); return; }
+      const payload = location.state;
+      if (!payload || !payload.state) { setMissing(true); return; }
+      const result = await generateDebrief(sessionId, {
+        caseId: payload.caseId,
+        state: payload.state,
+        transcript: payload.transcript,
+        endedBy: payload.endedBy,
+      });
+      writeCache(sessionId, result);
+      setReport(result);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Could not generate your feedback.');
     } finally {
       setLoading(false);
     }
   }
 
+  const topBar = (right) => (
+    <div style={{
+      background: '#fff', borderBottom: '0.5px solid #e0dbd2',
+      padding: '0 24px', height: 52,
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+    }}>
+      <div style={{ fontSize: 16, fontWeight: 600, color: '#2d5a3d' }}>Abhyas · Feedback</div>
+      {right}
+    </div>
+  );
+
+  const goButtons = (
+    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <button
+        onClick={() => navigate('/')}
+        style={{
+          background: '#2d5a3d', color: '#fff', border: 'none', borderRadius: 8,
+          padding: '12px 24px', fontSize: 13, fontFamily: 'inherit', fontWeight: 500, cursor: 'pointer'
+        }}
+      >Case library</button>
+    </div>
+  );
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', color: '#6b6459', fontSize: 13, flexDirection: 'column', gap: 8 }}>
-      <div>Generating your debrief...</div>
-      <div style={{ fontSize: 11, color: '#a09890' }}>This takes a few seconds</div>
+      <div>Preparing your feedback...</div>
+      <div style={{ fontSize: 11, color: '#a09890' }}>This takes about 10 seconds</div>
+    </div>
+  );
+
+  if (missing) return (
+    <div style={{ minHeight: '100vh', background: '#f7f5f0' }}>
+      {topBar(null)}
+      <div style={{ padding: 24, maxWidth: 520, margin: '0 auto' }}>
+        <Card>
+          <div style={{ fontSize: 14, lineHeight: 1.7, color: '#1c1a16', marginBottom: 14 }}>
+            Your feedback can only be opened straight after you finish a consultation, because the record of your consultation is not stored yet.
+            If you reloaded or reopened this page, please run the case again.
+          </div>
+          {goButtons}
+        </Card>
+      </div>
     </div>
   );
 
   if (error) return (
-    <div style={{ padding: 24, color: '#7a1f1f', fontSize: 13 }}>Error: {error}</div>
+    <div style={{ minHeight: '100vh', background: '#f7f5f0' }}>
+      {topBar(null)}
+      <div style={{ padding: 24, maxWidth: 520, margin: '0 auto' }}>
+        <Card style={{ borderColor: '#f0a0a0' }}>
+          <div style={{ fontSize: 13, lineHeight: 1.7, color: '#7a1f1f', marginBottom: 14 }}>
+            Could not prepare your feedback: {error}
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              onClick={load}
+              style={{
+                background: '#2d5a3d', color: '#fff', border: 'none', borderRadius: 8,
+                padding: '12px 24px', fontSize: 13, fontFamily: 'inherit', fontWeight: 500, cursor: 'pointer'
+              }}
+            >Try again</button>
+            <button
+              onClick={() => navigate('/')}
+              style={{
+                background: '#fff', color: '#1c1a16', border: '1px solid #e0dbd2', borderRadius: 8,
+                padding: '12px 24px', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer'
+              }}
+            >Case library</button>
+          </div>
+        </Card>
+      </div>
+    </div>
   );
 
-  const totalScore = debrief?.totalScore || 0;
-  const scoreColor = totalScore >= 85 ? '#2d5a3d' : totalScore >= 65 ? '#7a4a0e' : '#7a1f1f';
+  if (!report) return null;
+
+  const r = report;
+  const neverEvent = r.result && r.result.neverEvent;
+  const range = r.scoreMin !== r.scoreMax;
+  const unconfirmedCount = (r.items || []).filter(i => i.status === 'unclear').length;
+  const resultColor = neverEvent ? '#7a1f1f'
+    : (r.result.label === 'Not yet passing' ? '#7a4a0e' : '#2d5a3d');
 
   return (
     <div style={{ minHeight: '100vh', background: '#f7f5f0' }}>
-      <div style={{
-        background: '#fff', borderBottom: '0.5px solid #e0dbd2',
-        padding: '0 24px', height: 52,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-      }}>
-        <div style={{ fontSize: 16, fontWeight: 600, color: '#2d5a3d' }}>Abhyas — Debrief</div>
+      {topBar(
         <div style={{ fontSize: 13, color: '#6b6459' }}>
-          Total: <strong style={{ color: scoreColor }}>{totalScore}/100</strong>
+          {r.symptomLabel} · Case {r.caseNumber}
         </div>
-      </div>
+      )}
 
       <div style={{ padding: 24, maxWidth: 720, margin: '0 auto' }}>
 
-        {/* Score grid */}
+        {/* Never event: shown first, in red */}
+        {neverEvent && (
+          <div style={{
+            background: '#7a1f1f', color: '#fff', borderRadius: 10,
+            padding: '18px 20px', marginBottom: 12, lineHeight: 1.7
+          }}>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.09em', opacity: 0.8, marginBottom: 6 }}>
+              Never event
+            </div>
+            <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 8 }}>Not passed</div>
+            {(r.neverEvents || []).map(n => (
+              <div key={n.flag} style={{ fontSize: 14, marginBottom: 6 }}>{n.text}</div>
+            ))}
+            {r.teaching && r.teaching.chaperoneStatement && (
+              <div style={{ fontSize: 13, opacity: 0.92, marginTop: 10 }}>{r.teaching.chaperoneStatement}</div>
+            )}
+            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 10 }}>
+              A never event means the consultation is not passed, whatever your total score is.
+            </div>
+          </div>
+        )}
+
+        {/* Score */}
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 40, fontWeight: 600, fontFamily: 'monospace', color: resultColor }}>
+              {r.total}<span style={{ fontSize: 18, color: '#a09890' }}>/100</span>
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 500, color: resultColor }}>
+              {r.result.label}{r.result.provisional && !neverEvent ? ' (provisional)' : ''}
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: '#a09890', marginTop: 4 }}>
+            Pass {r.thresholds.pass} · Merit {r.thresholds.merit} · Distinction {r.thresholds.distinction}
+          </div>
+          {range && (
+            <div style={{
+              marginTop: 12, background: '#fdf3e7', border: '1px solid #f0c87a', borderRadius: 8,
+              padding: '10px 12px', fontSize: 12.5, lineHeight: 1.6, color: '#7a4a0e'
+            }}>
+              {unconfirmedCount} item{unconfirmedCount === 1 ? '' : 's'} could not be confirmed from the record, so your score lies between {r.scoreMin} and {r.scoreMax}.
+              Nothing was deducted for unconfirmed items.
+            </div>
+          )}
+          {r.judging && r.judging.problem && (
+            <div style={{
+              marginTop: 10, background: '#fbecec', border: '1px solid #f0a0a0', borderRadius: 8,
+              padding: '10px 12px', fontSize: 12.5, lineHeight: 1.6, color: '#7a1f1f'
+            }}>
+              The AI examiner did not answer fully this time, so some items show as unconfirmed. Running the case again will give a fuller result.
+            </div>
+          )}
+        </Card>
+
+        {/* The reveal */}
+        <Card>
+          <Label>The diagnosis</Label>
+          <div style={{ fontSize: 14, lineHeight: 1.7, color: '#1c1a16' }}>
+            <div>This case was: <strong>{r.diagnosisName}</strong></div>
+            <div style={{ marginTop: 4, color: '#6b6459' }}>You wrote: {r.studentDiagnosis || '(nothing)'}</div>
+          </div>
+        </Card>
+
+        {/* Domain scores */}
         <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
-          gap: 8, marginBottom: 20
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+          gap: 8, marginBottom: 12
         }}>
-          {Object.entries(debrief?.scores || {}).map(([domain, score]) => (
-            <div key={domain} style={{
-              background: '#fff', border: '0.5px solid #e0dbd2',
-              borderRadius: 8, padding: 12, textAlign: 'center'
+          {r.domains.map(d => (
+            <div key={d.id} style={{
+              background: '#fff', border: '0.5px solid #e0dbd2', borderRadius: 8, padding: 12, textAlign: 'center'
             }}>
               <div style={{ fontSize: 10, color: '#a09890', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
-                {DOMAIN_LABELS[domain] || domain}
+                {d.label}
               </div>
               <div style={{ fontSize: 20, fontWeight: 500, fontFamily: 'monospace', color: '#1c1a16' }}>
-                {score}
+                {d.score}<span style={{ fontSize: 12, color: '#a09890' }}>/{d.max}</span>
               </div>
+              {d.unconfirmed > 0 && (
+                <div style={{ fontSize: 10, color: '#7a4a0e', marginTop: 2 }}>{d.unconfirmed} unconfirmed</div>
+              )}
             </div>
           ))}
         </div>
 
-        {/* Debrief sections */}
-        {(debrief?.sections || []).map((section, i) => (
-          <div key={i} style={{
-            background: '#fff', border: '0.5px solid #e0dbd2',
-            borderRadius: 10, padding: '18px 20px', marginBottom: 10
-          }}>
-            <div style={{
-              fontSize: 11, fontWeight: 500, color: '#a09890',
-              textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8
-            }}>
-              {section.title}
-            </div>
-            <div style={{ fontSize: 13, color: '#1c1a16', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
-              {section.content}
-            </div>
-          </div>
+        {/* Item-by-item, with proof */}
+        {r.domains.map(d => (
+          <Card key={d.id}>
+            <Label>{d.label}</Label>
+            {r.items.filter(i => i.domain === d.id).map(it => {
+              const st = STATUS[it.status] || STATUS.unclear;
+              return (
+                <div key={it.id} style={{
+                  display: 'grid', gridTemplateColumns: '28px 1fr auto', gap: 10,
+                  padding: '10px 0', borderTop: '0.5px solid #efebe3'
+                }}>
+                  <div style={{
+                    width: 24, height: 24, borderRadius: '50%', background: st.bg, color: st.color,
+                    border: `1px solid ${st.border}`, display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', fontSize: 13, fontWeight: 600
+                  }}>{st.icon}</div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: '#1c1a16', marginBottom: 2 }}>{it.label}</div>
+                    <div style={{ fontSize: 13, lineHeight: 1.6, color: '#3f3b34' }}>{it.text}</div>
+                    {it.evidence && (
+                      <div style={{ fontSize: 12, color: '#6b6459', marginTop: 4, fontStyle: 'italic' }}>{it.evidence}</div>
+                    )}
+                    {it.note && (
+                      <div style={{ fontSize: 11.5, color: '#a09890', marginTop: 4 }}>{it.note}</div>
+                    )}
+                  </div>
+                  <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b6459', whiteSpace: 'nowrap' }}>
+                    {it.awarded}/{it.points}
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
         ))}
 
-        {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
-          <button
-            onClick={() => navigate(`/simulate/${debrief?.caseId || 'CHEST-L1-001'}`)}
-            style={{
-              background: '#2d5a3d', color: '#fff', border: 'none',
-              borderRadius: 8, padding: '12px 24px', fontSize: 13,
-              fontFamily: 'inherit', fontWeight: 500, cursor: 'pointer'
-            }}
-          >
-            Run again
-          </button>
-          <button
-            onClick={() => navigate('/')}
-            style={{
-              background: '#fff', color: '#1c1a16',
-              border: '1px solid #e0dbd2', borderRadius: 8,
-              padding: '12px 24px', fontSize: 13,
-              fontFamily: 'inherit', cursor: 'pointer'
-            }}
-          >
-            Case library
-          </button>
-          <a
-            href="https://forms.google.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: 'inline-flex', alignItems: 'center',
-              background: '#fff', color: '#1c1a16',
-              border: '1px solid #e0dbd2', borderRadius: 8,
-              padding: '12px 24px', fontSize: 13,
-              fontFamily: 'inherit', textDecoration: 'none'
-            }}
-          >
-            Feedback ↗
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
+        {/* Penalties */}
+        {r.penalties && r.penalties.length > 0 && (
+          <Card>
+            <Label>Penalties</Label>
+            {r.penalties.map(p => (
+              <div key={p.id} style={{
+                display: 'grid', gridTemplateColumns: '1fr auto', gap: 10,
+                padding: '8px 0', borderTop: '0.5px solid #efebe3', fontSize: 13, lineHeight: 1.6
+              }}>
+                <div style={{ color: p.status === 'unclear' ? '#7a4a0e' : '#7a1f1f' }}>
+                  {p.status === 'unclear'
+                    ? `Could not confirm whether this applies: ${p.text}`
+                    : p.text}
+                </div>
